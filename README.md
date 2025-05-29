@@ -13,6 +13,8 @@ Saves encoded messages to .wav files.
 
 Decodes real-time audio from microphone input using FFT.
 
+Decodes from saved .wav files.
+
 Supports redundancy and signal stability for improved decoding.
 
 ## How It Works
@@ -46,6 +48,9 @@ sudo apt-get install portaudio19-dev python3-pyaudio
 
 ## Encode and Play Text
 
+ python3/python audio_modem.py encode "writewhatyouwish"
+
 ## Decode Live Audio (Microphone Input)
 
+python3 audio_modem.py decode
 
