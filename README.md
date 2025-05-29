@@ -14,3 +14,33 @@ Saves encoded messages to .wav files.
 Decodes real-time audio from microphone input using FFT.
 
 Supports redundancy and signal stability for improved decoding.
+
+## How It Works
+### Encoding:
+
+Each ASCII character (8 bits) is mapped to a set of frequencies. A bit value of 1 activates the corresponding frequency.
+
+The encoder supports:
+
+Character repetition (--repetitions) for redundancy.
+
+Pause between characters for separation.
+
+Fade-in/fade-out to avoid audio clicks.
+
+### Decoding:
+
+Continuously listens to microphone input.
+
+Applies a Hanning window + FFT to detect present frequencies.
+
+Converts detected frequencies back to binary states.
+
+Stabilizes detection by requiring the same state to persist over several windows.
+
+## Dependencies
+
+pip install numpy pyaudio matplotlib scipy
+
+sudo apt-get install portaudio19-dev python3-pyaudio
+
