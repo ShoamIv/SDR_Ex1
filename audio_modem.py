@@ -7,7 +7,6 @@ from scipy.fft import rfft, rfftfreq
 from scipy.io import wavfile
 import wave
 
-# Constants - same frequencies as the original web implementation
 FREQUENCIES = [392, 784, 1046.5, 1318.5, 1568, 1864.7, 2093, 2637]
 SAMPLE_RATE = 44100  # Standard audio sample rate
 
@@ -21,10 +20,11 @@ class AudioModem:
 
 
 class Encoder(AudioModem):
-    def __init__(self, active_duration=0.1, pause_duration=0.02):
+    def __init__(self, active_duration=0.1, pause_duration=0.02, repetitions=5):
         super().__init__()
         self.active_duration = active_duration  # Duration in seconds for each character
         self.pause_duration = pause_duration  # Pause between characters
+        self.repetitions = repetitions  # Number of times to repeat each character
 
     def char_to_frequencies(self, char):
         """Convert a character to a list of active frequencies based on its binary representation."""
@@ -66,24 +66,33 @@ class Encoder(AudioModem):
         return signal
 
     def encode_text(self, text):
-        """Encode the entire text as audio."""
+        """Encode the entire text as audio with repetitions for stability."""
         encoded_signal = np.array([])
 
         # Add initial silence to help decoding
-        initial_pause = np.zeros(int(SAMPLE_RATE * 0.1))
+        initial_pause = np.zeros(int(SAMPLE_RATE * 0.2))  # Longer initial pause
         encoded_signal = np.append(encoded_signal, initial_pause)
 
         for char in text:
-            # Generate audio for character
-            char_signal = self.generate_audio_for_char(char)
-            encoded_signal = np.append(encoded_signal, char_signal)
+            print(f"Encoding '{char}' ({self.repetitions} times)")
 
-            # Add pause between characters
-            pause = np.zeros(int(SAMPLE_RATE * self.pause_duration))
-            encoded_signal = np.append(encoded_signal, pause)
+            # Repeat each character multiple times for better detection
+            for rep in range(self.repetitions):
+                # Generate audio for character
+                char_signal = self.generate_audio_for_char(char)
+                encoded_signal = np.append(encoded_signal, char_signal)
+
+                # Add small pause between repetitions (except for the last one)
+                if rep < self.repetitions - 1:
+                    small_pause = np.zeros(int(SAMPLE_RATE * (self.pause_duration / 2)))
+                    encoded_signal = np.append(encoded_signal, small_pause)
+
+            # Add longer pause between different characters
+            char_pause = np.zeros(int(SAMPLE_RATE * self.pause_duration * 5))
+            encoded_signal = np.append(encoded_signal, char_pause)
 
         # Add final silence
-        final_pause = np.zeros(int(SAMPLE_RATE * 0.1))
+        final_pause = np.zeros(int(SAMPLE_RATE * 0.2))
         encoded_signal = np.append(encoded_signal, final_pause)
 
         return encoded_signal
@@ -115,8 +124,9 @@ class Encoder(AudioModem):
 
     def encode_and_play(self, text):
         """Encode and play the text."""
-        print(f"Encoding and playing: {text}")
+        print(f"Encoding and playing: '{text}' (each character repeated {self.repetitions} times)")
         audio_data = self.encode_text(text)
+        print(f"Total audio duration: {len(audio_data) / SAMPLE_RATE:.2f} seconds")
         self.play_audio(audio_data)
 
     def save_to_file(self, text, filename):
@@ -140,6 +150,7 @@ class Encoder(AudioModem):
             wf.writeframes(audio_data.tobytes())
 
         print(f"Saved encoded audio to {filename}")
+        print(f"Audio duration: {len(audio_data) / SAMPLE_RATE:.2f} seconds")
 
 
 class Decoder(AudioModem):
@@ -150,24 +161,25 @@ class Decoder(AudioModem):
         self.debug = False
 
     def detect_frequencies(self, fft_data, fft_freqs):
-        """Detect which frequencies are present in the FFT data."""
+        """Detect which frequencies are present in the FFT data with improved accuracy."""
         active_freqs = []
         relative_strengths = []
 
         # Find the overall peak for relative threshold
         peak_magnitude = np.max(fft_data)
-        noise_floor = np.median(fft_data)
+        noise_floor = np.percentile(fft_data, 25)  # Use 25th percentile instead of median for better noise estimation
 
-        if peak_magnitude < 1e-6:  # Almost silence
+        if peak_magnitude < 1e-5:  # Almost silence
             return [], []
 
-        # Check each target frequency
+        # More conservative frequency detection
+        detected_peaks = []
         for freq in FREQUENCIES:
-            # Find the closest frequency bin and a small range around it
+            # Find the closest frequency bin
             center_idx = np.argmin(np.abs(fft_freqs - freq))
 
-            # Look at a small window around the expected frequency to account for slight tuning issues
-            window_size = 3  # Number of bins to look at on each side
+            # Look at a small window around the expected frequency
+            window_size = 2  # Smaller window for more precision
             start_idx = max(0, center_idx - window_size)
             end_idx = min(len(fft_data) - 1, center_idx + window_size)
 
@@ -175,15 +187,30 @@ class Decoder(AudioModem):
             window_peak_idx = start_idx + np.argmax(fft_data[start_idx:end_idx + 1])
             peak_value = fft_data[window_peak_idx]
 
-            # Calculate signal-to-noise ratio
-            snr = peak_value / (noise_floor + 1e-10)  # Avoid division by zero
+            # Calculate various metrics
+            snr = peak_value / (noise_floor + 1e-10)
+            relative_strength = peak_value / peak_magnitude
 
-            # If peak is above absolute and relative thresholds
-            adaptive_threshold = self.bin_value_threshold * peak_magnitude
+            # More stringent detection criteria
+            adaptive_threshold = max(
+                self.bin_value_threshold * peak_magnitude,  # Relative to peak
+                noise_floor * 5  # Absolute noise floor multiple
+            )
 
-            if peak_value > adaptive_threshold and snr > 3.0:
-                active_freqs.append(freq)
-                relative_strengths.append(peak_value / peak_magnitude)
+            if (peak_value > adaptive_threshold and
+                    snr > 4.0 and  # Stricter SNR requirement
+                    relative_strength > 0.1):  # Must be at least 10% of peak
+
+                detected_peaks.append((freq, peak_value, relative_strength))
+
+        # Sort by strength and only take the strongest peaks if we have too many
+        detected_peaks.sort(key=lambda x: x[1], reverse=True)
+
+        # Limit to maximum reasonable number of frequencies (ASCII has max 8 bits)
+        max_freqs = 6  # Conservative limit
+        for freq, peak_value, rel_strength in detected_peaks[:max_freqs]:
+            active_freqs.append(freq)
+            relative_strengths.append(rel_strength)
 
         return active_freqs, relative_strengths
 
@@ -197,74 +224,108 @@ class Decoder(AudioModem):
         return state
 
     def decode_audio_stream(self, duration=10):
-        """Decode audio from microphone for the specified duration."""
-        CHUNK = 4096  # Larger chunk for better frequency resolution
+        """Decode audio from microphone using sliding buffer and tone stability detection."""
+        window_size = int(SAMPLE_RATE * 0.50)  # Larger window for better frequency resolution
+        step_size = window_size // 8  # More overlap for stability
+        min_persistent_windows = max(5, self.duplicate_state_threshold * 2)  # More conservative
+        silence_threshold = 0.005  # Lower silence threshold
+        min_signal_strength = 0.01  # Minimum signal strength to consider
 
         stream = self.audio.open(
             format=pyaudio.paFloat32,
             channels=1,
             rate=SAMPLE_RATE,
             input=True,
-            frames_per_buffer=CHUNK
+            frames_per_buffer=step_size
         )
 
         print(f"Listening for {duration} seconds...")
+        print(f"Using duplicate threshold: {min_persistent_windows}")
 
         decoded_text = ""
-        prev_state = 0
-        duplicates = 0
-        silent_chunks = 0
+        current_state = None
+        persistent_count = 0
+        sliding_buffer = np.zeros(window_size, dtype=np.float32)
+        last_output_time = 0
+        state_history = []  # Track recent states
 
         start_time = time.time()
 
         while time.time() - start_time < duration:
-            # Read audio chunk
-            audio_bytes = stream.read(CHUNK, exception_on_overflow=False)
-            audio_data = np.frombuffer(audio_bytes, dtype=np.float32)
+            current_time = time.time() - start_time
 
-            # Compute FFT
-            fft_data = np.abs(rfft(audio_data))
-            fft_freqs = rfftfreq(len(audio_data), 1.0 / SAMPLE_RATE)
-
-            # Check if the chunk is mostly silence
-            if np.max(np.abs(audio_data)) < 0.01:
-                silent_chunks += 1
-                if silent_chunks > 5:  # Reset state after continuous silence
-                    prev_state = 0
-                    duplicates = 0
+            # Read new audio chunk
+            try:
+                audio_bytes = stream.read(step_size, exception_on_overflow=False)
+                new_data = np.frombuffer(audio_bytes, dtype=np.float32)
+            except:
                 continue
-            else:
-                silent_chunks = 0
 
-            # Detect active frequencies
+            # Slide buffer and append new data
+            sliding_buffer = np.roll(sliding_buffer, -step_size)
+            sliding_buffer[-step_size:] = new_data
+
+            # Check signal strength
+            signal_rms = np.sqrt(np.mean(sliding_buffer ** 2))
+            if signal_rms < min_signal_strength:
+                persistent_count = 0
+                current_state = None
+                state_history = []
+                continue
+
+            # Apply window function for better FFT
+            windowed_buffer = sliding_buffer * np.hanning(len(sliding_buffer))
+
+            # FFT and frequency detection
+            fft_data = np.abs(rfft(windowed_buffer))
+            fft_freqs = rfftfreq(len(windowed_buffer), 1.0 / SAMPLE_RATE)
             active_freqs, strengths = self.detect_frequencies(fft_data, fft_freqs)
 
-            # Get state from active frequencies
+            # Map to binary state
             state = self.get_state_from_frequencies(active_freqs)
 
-            # Print current binary state
+            # Keep track of recent states for stability analysis
+            state_history.append(state)
+            if len(state_history) > 10:
+                state_history.pop(0)
+
+            # Print debug info
             binary_str = format(state, '08b')
-            active_str = ', '.join([f"{f}Hz" for f in active_freqs])
-            print(f"State: 0b{binary_str} | Active: {active_str}", end='\r')
+            active_str = ', '.join([f"{f:.1f}Hz" for f in sorted(active_freqs)])
+            print(
+                f"Time: {current_time:.1f}s | State: 0b{binary_str} | Active: {active_str} | RMS: {signal_rms:.4f} | Count: {persistent_count}",
+                end='\r')
 
-            # Check for duplicate states (this helps filter out noise)
-            if state == prev_state and state > 0:  # Only count duplicates for non-zero states
-                duplicates += 1
+            # Enhanced state stability check
+            if state == current_state and state > 0:
+                persistent_count += 1
             else:
-                prev_state = state
-                duplicates = 0
+                # Only change state if the new state appears multiple times recently
+                if len(state_history) >= 3 and state_history[-3:].count(state) >= 2:
+                    current_state = state
+                    persistent_count = 1
+                else:
+                    persistent_count = 0
 
-            # Output character when enough duplicates are detected
-            if duplicates >= self.duplicate_state_threshold and state > 0:
-                if state < 256:  # Valid ASCII range
+            # Emit character only for valid printable ASCII and with strong stability
+            if (persistent_count >= min_persistent_windows and
+                    32 <= state <= 126 and  # Only printable ASCII characters
+                    current_time - last_output_time > 0.5):  # Longer minimum time between characters
+
+                # Double-check by looking at recent state consistency
+                recent_consistent = len(state_history) >= 5 and state_history[-5:].count(state) >= 4
+
+                if recent_consistent:
                     char = chr(state)
                     decoded_text += char
-                    print(f"\nDetected: '{char}' (ASCII: {state})")
-                duplicates = 0
+                    print(f"\nDetected: '{char}' (ASCII: {state}) at {current_time:.1f}s")
+                    last_output_time = current_time
+                    persistent_count = 0
+                    current_state = None
+                    state_history = []  # Clear history after successful detection
 
         stream.stop_stream()
         stream.close()
-
         return decoded_text
 
     def show_spectrogram(self, audio_data, sample_rate):
@@ -387,7 +448,7 @@ class Decoder(AudioModem):
             # Output character when enough duplicates are detected
             if duplicates >= self.duplicate_state_threshold and state > 0:
                 # Only add character if we haven't added one recently
-                if time_pos - last_char_time > 0.05:  # Minimum time between characters
+                if time_pos - last_char_time > 0.3:  # Minimum time between characters
                     if state < 256:  # Valid ASCII range
                         char = chr(state)
                         decoded_text += char
@@ -437,6 +498,8 @@ def main():
                                 help='Duration of active bit in seconds (default: 0.1)')
     encoder_parser.add_argument('--pause-duration', type=float, default=0.02,
                                 help='Pause between characters in seconds (default: 0.02)')
+    encoder_parser.add_argument('--repetitions', type=int, default=5,
+                                help='Number of times to repeat each character (default: 5)')
     encoder_parser.add_argument('--save', type=str, default=None,
                                 help='Save to WAV file instead of playing')
 
@@ -444,21 +507,24 @@ def main():
     decoder_parser = subparsers.add_parser('decode', help='Decode audio to text')
     decoder_parser.add_argument('--duration', type=int, default=10,
                                 help='Duration to listen in seconds (default: 10)')
-    decoder_parser.add_argument('--threshold', type=float, default=0.2,
-                                help='Relative threshold for frequency detection (default: 0.2)')
+    decoder_parser.add_argument('--threshold', type=float, default=0.15,
+                                help='Relative threshold for frequency detection (default: 0.15)')
     decoder_parser.add_argument('--duplicates', type=int, default=3,
                                 help='Duplicate states before output (default: 3)')
     decoder_parser.add_argument('--file', type=str, default=None,
                                 help='Decode from WAV file instead of microphone')
     decoder_parser.add_argument('--show-spectrogram', action='store_true',
                                 help='Show spectrogram (requires matplotlib)')
+    decoder_parser.add_argument('--debug', action='store_true',
+                                help='Enable debug output for troubleshooting')
 
     args = parser.parse_args()
 
     if args.command == 'encode':
         encoder = Encoder(
             active_duration=args.active_duration,
-            pause_duration=args.pause_duration
+            pause_duration=args.pause_duration,
+            repetitions=args.repetitions
         )
 
         if args.save:
@@ -472,12 +538,15 @@ def main():
             duplicate_state_threshold=args.duplicates
         )
 
+        if hasattr(args, 'debug') and args.debug:
+            decoder.debug = True
+
         if args.file:
             decoded_text = decoder.decode_from_file(args.file, args.show_spectrogram)
         else:
             decoded_text = decoder.decode_audio_stream(duration=args.duration)
 
-        print(f"\nDecoded text: {decoded_text}")
+        print(f"\nDecoded text: '{decoded_text}'")
 
     else:
         parser.print_help()
