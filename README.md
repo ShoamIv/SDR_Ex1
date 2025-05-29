@@ -70,53 +70,54 @@ python audio_modem.py decode --file example.wav
 
 ### Encoding Flags
 
---active-duration (float):
+#### --active-duration (float):
 
 Duration (seconds) of each character's audio tone (default: 0.1s).
 
 Increase for better decoding at the cost of slower transmission.
 
---pause-duration (float):
+#### --pause-duration (float):
 
 Silence duration (seconds) between characters (default: 0.02s).
 
 Increase if decoding misses characters.
 
---repetitions (int):
+#### --repetitions (int):
 
 How many times each character is repeated (default: 5).
 
 Higher values improve reliability but slow transmission.
 
---save (filename):
+#### --save (filename):
 
 Save to a WAV file instead of playing live (e.g., --save output.wav).
 
 ### Decoding Flags:
 
---file (filename):
+#### --file (filename):
 
 Decode from a WAV file instead of microphone (e.g., --file output.wav).
 
---duration (int):
+#### --duration (int):
 
 Seconds to listen via microphone (default: 10). Ignored if --file is used.
 
---threshold (float):
+#### --threshold (float):
 
 Frequency detection sensitivity (0.0–1.0, default: 0.15).
 
 Lower values detect weaker signals but may catch noise.
 
---duplicates (int):
+#### --duplicates (int):
 
 Required consecutive detections before accepting a character (default: 3).
 
 Increase to reduce errors (recommended: 3–5).
 
---show-spectrogram:
+#### --show-spectrogram:
 
 Visualize frequencies (requires matplotlib).
 
---debug:
+#### --debug:
+
 Show detailed detection logs.
