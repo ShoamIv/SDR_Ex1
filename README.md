@@ -44,3 +44,8 @@ pip install numpy pyaudio matplotlib scipy
 
 sudo apt-get install portaudio19-dev python3-pyaudio
 
+## Encode and Play Text
+
+## Decode Live Audio (Microphone Input)
+
+
