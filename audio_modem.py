@@ -227,7 +227,7 @@ class Decoder(AudioModem):
         """Decode audio from microphone using sliding buffer and tone stability detection."""
         window_size = int(SAMPLE_RATE * 0.50)  # Larger window for better frequency resolution
         step_size = window_size // 8  # More overlap for stability
-        min_persistent_windows = max(5, self.duplicate_state_threshold * 2)  # More conservative
+        min_persistent_windows = max(5, self.duplicate_state_threshold)  # More conservative
         silence_threshold = 0.005  # Lower silence threshold
         min_signal_strength = 0.01  # Minimum signal strength to consider
 
@@ -292,9 +292,9 @@ class Decoder(AudioModem):
             # Print debug info
             binary_str = format(state, '08b')
             active_str = ', '.join([f"{f:.1f}Hz" for f in sorted(active_freqs)])
-            print(
-                f"Time: {current_time:.1f}s | State: 0b{binary_str} | Active: {active_str} | RMS: {signal_rms:.4f} | Count: {persistent_count}",
-                end='\r')
+            #print(
+            #    f"Time: {current_time:.1f}s | State: 0b{binary_str} | Active: {active_str} | RMS: {signal_rms:.4f} | Count: {persistent_count}",
+            #    end='\r')
 
             # Enhanced state stability check
             if state == current_state and state > 0:
