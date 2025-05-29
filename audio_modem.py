@@ -445,16 +445,18 @@ class Decoder(AudioModem):
                 prev_state = state
                 duplicates = 0
 
-            # Output character when enough duplicates are detected
-            if duplicates >= self.duplicate_state_threshold and state > 0:
-                # Only add character if we haven't added one recently
-                if time_pos - last_char_time > 0.3:  # Minimum time between characters
-                    if state < 256:  # Valid ASCII range
-                        char = chr(state)
+            # Track stable sequences of the same state
+            min_repeats = 3  # You can increase this if needed
+            if state == prev_state and state > 0:
+                duplicates += 1
+            else:
+                if prev_state > 0 and duplicates >= min_repeats:
+                    if prev_state < 256:
+                        char = chr(prev_state)
                         decoded_text += char
-                        print(f"\nDetected at {time_pos:.2f}s: '{char}' (ASCII: {state})")
-                        last_char_time = time_pos
-                duplicates = 0
+                        print(f"\nDetected stable group at {time_pos:.2f}s: '{char}' (ASCII: {prev_state})")
+                prev_state = state
+                duplicates = 1
 
         # Post-processing: If we didn't get any text, try with a lower threshold
         if not decoded_text and states:
