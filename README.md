@@ -28,8 +28,6 @@ Character repetition (--repetitions) for redundancy.
 
 Pause between characters for separation.
 
-Fade-in/fade-out to avoid audio clicks.
-
 ### Decoding:
 
 Continuously listens to microphone input.
